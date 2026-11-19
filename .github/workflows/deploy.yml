@@ -1,0 +1,58 @@
+# RallyQ STAGING: a test copy of rallyq.in on the paddleq-staging database (made-up data only).
+# staging-ref names the pickleq branch or commit to show. Change it and push to put a new version on staging.
+# This never touches rallyq.in, the pqclub repo or the live database.
+name: Build and publish RallyQ staging
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with: { path: site }
+      - name: Check out the version to test
+        run: |
+          ref=$(tr -d '[:space:]' < site/staging-ref)
+          git clone --quiet --filter=blob:none https://github.com/workwithvineeth/pickleq.git src
+          cd src && git checkout --quiet "$ref" && echo "Staging $(git rev-parse --short=7 HEAD)"
+      - uses: actions/setup-node@v7
+        with: { node-version: 22 }
+      - name: Test and build (staging database, test data only)
+        working-directory: src
+        env:
+          VITE_BASE: ./
+          VITE_STAGING: 'on'
+          VITE_SUPABASE_URL: https://xlviuobtfszwfmnwcjjr.supabase.co
+          VITE_SUPABASE_KEY: sb_publishable_EN1mvqQfoSpMPkTd83-WRg_DAkY3GO7
+          VITE_SENTRY_DSN: ''
+          VITE_POSTHOG_KEY: ''
+        run: |
+          npm ci
+          npm test
+          npm run build:club
+          grep -q xlviuobtfszwfmnwcjjr -r dist/club/assets || { echo "Not pointing at the staging database"; exit 1; }
+          if grep -q bgaorexagktxxofdkbcm -r dist/club; then echo "Live database found in the staging build"; exit 1; fi
+          sed -i 's#<head>#<head><meta name="robots" content="noindex,nofollow">#' dist/club/index.html
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with: { path: src/dist/club }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: '${{ steps.deployment.outputs.page_url }}' }
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
